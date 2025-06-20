@@ -100,8 +100,10 @@ def get_fb_video_links(fb_url):
 
         for link in soup.select("a.download-link-fb"):
             quality = link.find_previous("td", class_="video-quality").text.strip()
+            # Map savef.app quality to FDown.net style (HD or SD)
+            normalized_quality = "HD" if "720p" in quality else "SD"
             href = link["href"]
-            download_links.append({'quality': quality, 'url': href})
+            download_links.append({'quality': normalized_quality, 'url': href})
 
         if not download_links:
             return {"error": "No downloadable video links found from savef.app."}
