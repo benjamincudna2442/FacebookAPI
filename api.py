@@ -1,3 +1,6 @@
+#Copyright @ISmartCoder
+#Updates t.me/TheSmartDev
+
 from flask import Flask, request, jsonify
 import cloudscraper
 from bs4 import BeautifulSoup
@@ -10,70 +13,47 @@ import requests
 
 app = Flask(__name__)
 
-# Configure logging to show warnings and errors, but reduce noise
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.WARNING)
 
 def get_local_ip():
-    """Get the machine's local IP address."""
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))  # Connect to a public IP to get local IP
+        s.connect(("8.8.8.8", 80))
         ip = s.getsockname()[0]
         s.close()
         return ip
     except Exception:
-        return "0.0.0.0"  # Fallback to default
+        return "0.0.0.0"
 
-def get_facebook_thumbnail_url(video_url):
-    """
-    Fetches the thumbnail download URL for a given Facebook video URL.
-    
-    Args:
-        video_url (str): The Facebook video URL
-    
-    Returns:
-        str: The thumbnail download URL or None if not found
-    """
-    api_url = "https://vidthumbnail.com/facebook/download"
-    payload = {"videoUrl": video_url}
-    
+def get_experts_tool_links(fb_url):
     try:
-        response = requests.post(api_url, data=payload, headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        })
-        
-        if response.status_code != 200:
-            return None
-            
+        payload = {'url': fb_url}
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
+        }
+        response = requests.post('https://www.expertstool.com/converter.php', data=payload, headers=headers)
+        response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
-        download_button = soup.find('a', class_='btn py-3 px-4 facebook btn-lg w-100')
-        
-        if not download_button:
-            return None
-            
-        download_url = download_button.get('href')
-        if not download_url:
-            return None
-            
-        if download_url.startswith('/'):
-            download_url = urljoin("https://vidthumbnail.com", download_url)
-            
-        return download_url
-        
-    except Exception:
-        return None
+        downloads = {'links': [], 'thumbnail': None}
+        video_divs = soup.find_all('div', class_='col-md-8 col-md-offset-2')
+        for div in video_divs:
+            video_link = div.find('a', href=True, class_='btn btn-primary btn-sm btn-block', style='background-color: green;')
+            if video_link and 'Download VideO File' in video_link.text:
+                quality = 'SD' if '[SD]' in video_link.text else 'HD' if '[HD]' in video_link.text else 'Unknown'
+                downloads['links'].append({'quality': quality, 'url': video_link['href']})
+        image_divs = soup.find_all('div', class_='col-md-4 col-md-offset-4')
+        for div in image_divs:
+            image_link = div.find('a', href=True, class_='btn btn-primary btn-sm btn-block')
+            if image_link and 'Download image' in image_link.text:
+                downloads['thumbnail'] = image_link['href']
+        if not downloads['links'] and not downloads['thumbnail']:
+            return {"error": "No downloadable content found from Experts Tool."}
+        return downloads
+    except Exception as e:
+        return {"error": f"Failed to fetch from Experts Tool: {str(e)}"}
 
-def get_fb_video_links(fb_url):
-    """
-    Fetches download links for a given Facebook video URL using savef.app API.
-    
-    Args:
-        fb_url (str): The Facebook video URL
-    
-    Returns:
-        dict: Same format as FDown.net response with links, title, and thumbnail
-    """
+def get_savef_links(fb_url):
     api_url = "https://savef.app/api/ajaxSearch"
     payload = {
         "p": "home",
@@ -89,48 +69,28 @@ def get_fb_video_links(fb_url):
         "Referer": "https://savef.app/",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
     }
-
     try:
         response = requests.post(api_url, data=payload, headers=headers)
         response.raise_for_status()
         html_content = response.json().get("data", "")
-        
         soup = BeautifulSoup(html_content, "html.parser")
         download_links = []
-
         for link in soup.select("a.download-link-fb"):
             quality = link.find_previous("td", class_="video-quality").text.strip()
-            # Map savef.app quality to FDown.net style (HD or SD)
             normalized_quality = "HD" if "720p" in quality else "SD"
             href = link["href"]
             download_links.append({'quality': normalized_quality, 'url': href})
-
         if not download_links:
             return {"error": "No downloadable video links found from savef.app."}
-
-        # Get thumbnail URL
-        thumbnail_url = get_facebook_thumbnail_url(fb_url)
-        
         return {
             "links": download_links,
-            "title": "Unknown Title",  # Title not available from savef.app
-            "thumbnail": thumbnail_url if thumbnail_url else "Not available"
+            "title": "Unknown Title",
+            "thumbnail": "Not available"
         }
-
     except Exception as e:
-        return {"error": f"Failed to fetch download links from savef.app: {str(e)}"}
+        return {"error": f"Failed to fetch from savef.app: {str(e)}"}
 
-def get_fdown_download_links(fb_url):
-    """
-    Scrape FDown.net to get download links, title, and thumbnail for a given Facebook video URL.
-    If FDown.net fails, use savef.app as a fallback.
-    
-    Args:
-        fb_url (str): The Facebook video URL to download.
-    
-    Returns:
-        dict: Contains download links, video title, thumbnail URL, or error message.
-    """
+def get_fdown_links(fb_url):
     try:
         base_url = "https://fdown.net/"
         session = cloudscraper.create_scraper()
@@ -143,85 +103,85 @@ def get_fdown_download_links(fb_url):
             'Upgrade-Insecure-Requests': '1',
             'DNT': '1'
         }
-        
-        # Fetch main page
         response = session.get(base_url, headers=headers, timeout=5)
         response.raise_for_status()
-        
-        # Submit form to download.php
         form_data = {'URLz': fb_url}
         action_url = urljoin(base_url, "download.php")
         post_response = session.post(action_url, data=form_data, headers=headers, timeout=5)
         post_response.raise_for_status()
-        
-        # Parse response
         soup = BeautifulSoup(post_response.text, 'html.parser')
-        
-        # Check for errors
         error_div = soup.find('div', class_='alert-danger')
         if error_div:
-            error_text = error_div.get_text(strip=True).lower()
-            if "private" in error_text or "invalid" in error_text or "not found" in error_text:
-                # Try fallback API
-                return get_fb_video_links(fb_url)
             return {"error": "Unknown error from FDown.net"}
-        
-        # Extract video title
         title = None
         title_tag = soup.find('title')
         if title_tag:
             title = title_tag.get_text(strip=True)
         else:
-            # Fallback to h1 or h2 if title tag is missing
             heading = soup.find(['h1', 'h2'])
             if heading:
                 title = heading.get_text(strip=True)
-        # Clean up title (remove site branding if present)
         if title and "FDown" in title:
             title = title.replace(" - FDown", "").strip()
         if not title:
             title = "Unknown Title"
-        
-        # Extract download links
         download_links = []
         sd_link = soup.find('a', id='sdlink')
         hd_link = soup.find('a', id='hdlink')
-        
         if sd_link and sd_link.get('href'):
             download_links.append({'quality': 'SD', 'url': sd_link['href']})
-        
         if hd_link and hd_link.get('href'):
             download_links.append({'quality': 'HD', 'url': hd_link['href']})
-        
-        # Fallback: Extract .mp4 links using regex
         if not download_links:
             link_pattern = re.compile(r'(https?://[^\s\'"]+\.mp4[^\'"\s]*)')
             matches = link_pattern.findall(post_response.text)
             for i, link in enumerate(set(matches), 1):
                 download_links.append({'quality': f'Quality_{i}', 'url': link})
-        
         if not download_links:
-            # Try fallback API
-            return get_fb_video_links(fb_url)
-        
-        # Get thumbnail URL
-        thumbnail_url = get_facebook_thumbnail_url(fb_url)
-        
+            return {"error": "No downloadable video links found from FDown.net."}
         return {
             "links": download_links,
             "title": title,
-            "thumbnail": thumbnail_url if thumbnail_url else "Not available"
+            "thumbnail": "Not available"
         }
-    
     except Exception as e:
-        # Try fallback API
-        return get_fb_video_links(fb_url)
+        return {"error": f"Failed to fetch from FDown.net: {str(e)}"}
+
+def get_download_links(fb_url):
+    results = []
+    experts_result = get_experts_tool_links(fb_url)
+    if not isinstance(experts_result, dict) or "error" not in experts_result:
+        results.append(experts_result)
+    fdown_result = get_fdown_links(fb_url)
+    if not isinstance(fdown_result, dict) or "error" not in fdown_result:
+        results.append(fdown_result)
+    savef_result = get_savef_links(fb_url)
+    if not isinstance(savef_result, dict) or "error" not in savef_result:
+        results.append(savef_result)
+    if not results:
+        return {"error": "All sources failed to retrieve download links."}
+    combined_links = []
+    title = "Unknown Title"
+    thumbnail = "Not available"
+    for result in results:
+        if result.get('links'):
+            for link in result['links']:
+                if not any(l['url'] == link['url'] for l in combined_links):
+                    combined_links.append(link)
+        if result.get('title') and result['title'] != "Unknown Title":
+            title = result['title']
+        if result.get('thumbnail') and result['thumbnail'] != "Not available":
+            thumbnail = result['thumbnail']
+    if not combined_links:
+        return {"error": "No valid download links found from any source."}
+    return {
+        "links": combined_links,
+        "title": title,
+        "thumbnail": thumbnail
+    }
 
 @app.route('/', methods=['GET'])
 def welcome():
-    """
-    Root endpoint with a basic welcome message.
-    """
     return jsonify({
         "status": "success",
         "message": "Welcome to the Facebook Video Downloader API!",
@@ -236,26 +196,14 @@ def welcome():
 
 @app.route('/dl', methods=['GET'])
 def download_links():
-    """
-    API endpoint to get download links, title, and thumbnail for a Facebook video URL.
-    
-    Query Parameter:
-        url: The Facebook video URL (e.g., /dl?url=https://www.facebook.com/video-url)
-    
-    Response JSON:
-        {"links": [{"quality": "HD", "url": "link"}, ...], "title": "Video Title", "thumbnail": "thumbnail_url"} or {"error": "message"}
-    """
     try:
         fb_url = request.args.get('url', '').strip()
         if not fb_url:
             return jsonify({"error": "Missing 'url' query parameter"}), 400
-        
-        result = get_fdown_download_links(fb_url)
+        result = get_download_links(fb_url)
         if "error" in result:
             return jsonify(result), 400
-        
         return jsonify(result), 200
-    
     except Exception as e:
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
